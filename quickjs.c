@@ -32435,6 +32435,7 @@ int JS_FinishDynamicImport(JSContext *ctx, JSValue token, JSValue promise,
 
 static void js_set_module_evaluated(JSContext *ctx, JSModuleDef *m)
 {
+    m->async_evaluation = false;
     m->status = JS_MODULE_STATUS_EVALUATED;
     if (!JS_IsUndefined(m->promise)) {
         JSValue ret_val;
@@ -32531,14 +32532,7 @@ static JSValue js_async_module_execution_rejected(JSContext *ctx, JSValueConst t
     module->eval_has_exception = true;
     module->eval_exception = js_dup(error);
     module->status = JS_MODULE_STATUS_EVALUATED;
-
-    for(i = 0; i < module->async_parent_modules_count; i++) {
-        JSModuleDef *m = module->async_parent_modules[i];
-        JSValue m_obj = JS_NewModuleValue(ctx, m);
-        js_async_module_execution_rejected(ctx, JS_UNDEFINED, 1, &error, 0,
-                                           vc(&m_obj));
-        JS_FreeValue(ctx, m_obj);
-    }
+    module->async_evaluation = false;
 
     if (!JS_IsUndefined(module->promise)) {
         JSValue ret_val;
@@ -32546,6 +32540,13 @@ static JSValue js_async_module_execution_rejected(JSContext *ctx, JSValueConst t
         ret_val = JS_Call(ctx, module->resolving_funcs[1], JS_UNDEFINED,
                           1, &error);
         JS_FreeValue(ctx, ret_val);
+    }
+    for(i = 0; i < module->async_parent_modules_count; i++) {
+        JSModuleDef *m = module->async_parent_modules[i];
+        JSValue m_obj = JS_NewModuleValue(ctx, m);
+        js_async_module_execution_rejected(ctx, JS_UNDEFINED, 1, &error, 0,
+                                           vc(&m_obj));
+        JS_FreeValue(ctx, m_obj);
     }
     return JS_UNDEFINED;
 }
@@ -32565,7 +32566,6 @@ static JSValue js_async_module_execution_fulfilled(JSContext *ctx, JSValueConst 
     assert(module->status == JS_MODULE_STATUS_EVALUATING_ASYNC);
     assert(!module->eval_has_exception);
     assert(module->async_evaluation);
-    module->async_evaluation = false;
     js_set_module_evaluated(ctx, module);
 
     exec_list->tab = NULL;
