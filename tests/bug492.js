@@ -1,4 +1,4 @@
-import { assert } from "./assert.js";
+import { assert, assertThrows } from "./assert.js";
 
 // TypedArray.prototype.with must re-validate after user code in valueOf
 // https://github.com/bellard/quickjs/issues/492
@@ -23,24 +23,22 @@ function test_resize_shrink() {
     assert(result[1023] === 0);
 }
 
-// Test 2: detach during valueOf — must throw TypeError
+// Test 2: distinguish detachment during conversion from detachment at entry
 function test_detach() {
     var ab = new ArrayBuffer(16);
     var ta = new Int32Array(ab);
     ta[0] = 1; ta[1] = 2;
-    var caught = false;
-    try {
+    assertThrows(RangeError, () => {
         ta.with(0, {
             valueOf() {
                 ab.transfer();
                 return 999;
             }
         });
-    } catch(e) {
-        caught = true;
-        assert(e instanceof TypeError);
-    }
-    assert(caught);
+    });
+
+    var unexpected = { valueOf() { throw new Error("unexpected conversion"); } };
+    assertThrows(TypeError, () => ta.with(unexpected, unexpected));
 }
 
 // Test 3: resize to 0 during valueOf — must throw RangeError
