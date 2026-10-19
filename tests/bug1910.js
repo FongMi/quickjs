@@ -1,4 +1,10 @@
+/*---
+flags: [qjs:track-promise-rejections]
+---*/
 import {assert} from "./assert.js"
+import {setTimeout} from "qjs:os"
+
+const nextJob = () => new Promise(resolve => setTimeout(resolve, 0))
 
 // A generator object is created after the prologue of its function has run.
 // Variable references created by the prologue (the mapped arguments object,
@@ -23,46 +29,55 @@ for (const ctor of [function*() {}.constructor, async function*() {}.constructor
     assert(typeof it.next, "function")
 }
 
-// closure over `this` in a parameter initialiser
-for (const ctor of [function*() {}.constructor, async function*() {}.constructor]) {
-    let leaked, ref
-    ;(function() {
-        const gen = ctor("leak", "a = leak(() => this)", "yield 1;")
-        const o = { tag: "this" }
-        ref = new WeakRef(o)
-        o.g = gen.call(o, (f) => { leaked = f })
-    })()
-    gc()
-    assert(ref.deref() !== undefined, true)
-    assert(leaked().tag, "this")
-    assert(typeof leaked().g.next, "function")
+async function testWeakRefs() {
+    // closure over `this` in a parameter initialiser
+    for (const ctor of [function*() {}.constructor, async function*() {}.constructor]) {
+        let leaked, ref
+        ;(function() {
+            const gen = ctor("leak", "a = leak(() => this)", "yield 1;")
+            const o = { tag: "this" }
+            ref = new WeakRef(o)
+            o.g = gen.call(o, (f) => { leaked = f })
+        })()
+        // Let the host clear the WeakRef keep-alive before testing reachability.
+        await nextJob()
+        gc()
+        assert(ref.deref() !== undefined, true)
+        assert(leaked().tag, "this")
+        assert(typeof leaked().g.next, "function")
+    }
+
+    // closure over `arguments` in a parameter initialiser
+    {
+        let leaked, ref
+        ;(function() {
+            function* gen(a = (leaked = () => arguments)) {}
+            const g = gen(undefined, 2)
+            const args = leaked()
+            ref = new WeakRef(args)
+            args.g = g
+        })()
+        await nextJob()
+        gc()
+        assert(ref.deref() !== undefined, true)
+        assert(leaked().length, 2)
+    }
+
+    // nothing is kept alive once the references are dropped
+    {
+        let leaked, ref
+        ;(function() {
+            function* gen(a = (leaked = () => this)) {}
+            const o = {}
+            ref = new WeakRef(o)
+            o.g = gen.call(o)
+        })()
+        leaked = null
+        // A WeakRef target remains alive until the current host job ends.
+        await nextJob()
+        gc()
+        assert(ref.deref(), undefined)
+    }
 }
 
-// closure over `arguments` in a parameter initialiser
-{
-    let leaked, ref
-    ;(function() {
-        function* gen(a = (leaked = () => arguments)) {}
-        const g = gen(undefined, 2)
-        const args = leaked()
-        ref = new WeakRef(args)
-        args.g = g
-    })()
-    gc()
-    assert(ref.deref() !== undefined, true)
-    assert(leaked().length, 2)
-}
-
-// nothing is kept alive once the references are dropped
-{
-    let leaked, ref
-    ;(function() {
-        function* gen(a = (leaked = () => this)) {}
-        const o = {}
-        ref = new WeakRef(o)
-        o.g = gen.call(o)
-    })()
-    leaked = null
-    gc()
-    assert(ref.deref(), undefined)
-}
+testWeakRefs()
